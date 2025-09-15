@@ -112,6 +112,11 @@ export class BaseMcpServer {
 
       // Handle the request
       await transport.handleRequest(req, res, req.body);
+      
+      // Log successful request handling with request and response payloads
+      Logger.log(`[${this.serverName}] Request processed successfully - Method: ${req.method}, URL: ${req.url}, Session ID: ${sessionId || 'new'}`);
+      Logger.log(`[${this.serverName}] Request payload:`, JSON.stringify(req.body, null, 2));
+      Logger.log(`[${this.serverName}] Response status: ${res.statusCode}`);
     });
 
     // Reusable handler for GET and DELETE requests

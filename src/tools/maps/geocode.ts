@@ -21,7 +21,7 @@ async function ACTION(params: GeocodeParams): Promise<{ content: any[]; isError?
 
     if (!result.success) {
       return {
-        content: [{ type: "text", text: result.error || "地址轉換座標失敗" }],
+        content: [{ type: "text", text: result.error || "Geocoding failed" }],
         isError: true,
       };
     }
@@ -30,7 +30,7 @@ async function ACTION(params: GeocodeParams): Promise<{ content: any[]; isError?
       content: [
         {
           type: "text",
-          text: JSON.stringify(result.data, null, 2),
+          text: JSON.stringify(result.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '),
         },
       ],
       isError: false,
@@ -39,7 +39,7 @@ async function ACTION(params: GeocodeParams): Promise<{ content: any[]; isError?
     const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
     return {
       isError: true,
-      content: [{ type: "text", text: `地址轉換座標錯誤: ${errorMessage}` }],
+      content: [{ type: "text", text: `Geocoding error: ${errorMessage}` }],
     };
   }
 }

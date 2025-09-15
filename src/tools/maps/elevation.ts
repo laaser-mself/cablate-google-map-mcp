@@ -24,7 +24,7 @@ async function ACTION(params: ElevationParams): Promise<{ content: any[]; isErro
 
     if (!result.success) {
       return {
-        content: [{ type: "text", text: result.error || "獲取海拔數據失敗" }],
+        content: [{ type: "text", text: result.error || "Failed to retrieve elevation data" }],
         isError: true,
       };
     }
@@ -33,7 +33,7 @@ async function ACTION(params: ElevationParams): Promise<{ content: any[]; isErro
       content: [
         {
           type: "text",
-          text: JSON.stringify(result.data, null, 2),
+          text: JSON.stringify(result.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '),
         },
       ],
       isError: false,
@@ -42,7 +42,7 @@ async function ACTION(params: ElevationParams): Promise<{ content: any[]; isErro
     const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
     return {
       isError: true,
-      content: [{ type: "text", text: `獲取海拔數據錯誤: ${errorMessage}` }],
+      content: [{ type: "text", text: `Elevation data error: ${errorMessage}` }],
     };
   }
 }

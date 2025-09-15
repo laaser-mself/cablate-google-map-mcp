@@ -21,7 +21,7 @@ async function ACTION(params: PlaceDetailsParams): Promise<{ content: any[]; isE
 
     if (!result.success) {
       return {
-        content: [{ type: "text", text: result.error || "獲取詳細資訊失敗" }],
+        content: [{ type: "text", text: result.error || "Failed to fetch details" }],
         isError: true,
       };
     }
@@ -30,7 +30,7 @@ async function ACTION(params: PlaceDetailsParams): Promise<{ content: any[]; isE
       content: [
         {
           type: "text",
-          text: JSON.stringify(result.data, null, 2),
+          text: JSON.stringify(result.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '),
         },
       ],
       isError: false,
@@ -39,7 +39,7 @@ async function ACTION(params: PlaceDetailsParams): Promise<{ content: any[]; isE
     const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
     return {
       isError: true,
-      content: [{ type: "text", text: `獲取地點詳細資訊錯誤: ${errorMessage}` }],
+      content: [{ type: "text", text: `Error fetching place details: ${errorMessage}` }],
     };
   }
 }

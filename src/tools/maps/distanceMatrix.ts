@@ -23,7 +23,7 @@ async function ACTION(params: DistanceMatrixParams): Promise<{ content: any[]; i
 
     if (!result.success) {
       return {
-        content: [{ type: "text", text: result.error || "計算距離矩陣失敗" }],
+        content: [{ type: "text", text: result.error || "Distance matrix computation failed" }],
         isError: true,
       };
     }
@@ -32,7 +32,7 @@ async function ACTION(params: DistanceMatrixParams): Promise<{ content: any[]; i
       content: [
         {
           type: "text",
-          text: JSON.stringify(result.data, null, 2),
+          text: JSON.stringify(result.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '),
         },
       ],
       isError: false,
@@ -41,7 +41,7 @@ async function ACTION(params: DistanceMatrixParams): Promise<{ content: any[]; i
     const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
     return {
       isError: true,
-      content: [{ type: "text", text: `計算距離矩陣錯誤: ${errorMessage}` }],
+      content: [{ type: "text", text: `Distance matrix error: ${errorMessage}` }],
     };
   }
 }

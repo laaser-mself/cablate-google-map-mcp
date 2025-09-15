@@ -31,7 +31,7 @@ async function ACTION(params: DirectionsParams): Promise<{ content: any[]; isErr
 
     if (!result.success) {
       return {
-        content: [{ type: "text", text: result.error || "獲取路線指引失敗" }],
+        content: [{ type: "text", text: result.error || "Failed to retrieve directions" }],
         isError: true,
       };
     }
@@ -40,7 +40,7 @@ async function ACTION(params: DirectionsParams): Promise<{ content: any[]; isErr
       content: [
         {
           type: "text",
-          text: JSON.stringify(result.data, null, 2),
+          text: JSON.stringify(result.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '),
         },
       ],
       isError: false,
@@ -49,7 +49,7 @@ async function ACTION(params: DirectionsParams): Promise<{ content: any[]; isErr
     const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
     return {
       isError: true,
-      content: [{ type: "text", text: `獲取路線指引錯誤: ${errorMessage}` }],
+      content: [{ type: "text", text: `Directions error: ${errorMessage}` }],
     };
   }
 }
