@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PlacesSearcher } from "../../services/PlacesSearcher.js";
+import { getSharedPlacesSearcher } from "../../services/sharedPlacesSearcher.js";
 
 const NAME = "maps_distance_matrix";
 const DESCRIPTION = "Calculate travel distances and durations between multiple origins and destinations for different travel modes";
@@ -12,14 +12,9 @@ const SCHEMA = {
 
 export type DistanceMatrixParams = z.infer<z.ZodObject<typeof SCHEMA>>;
 
-let placesSearcher: PlacesSearcher | null = null;
-
 async function ACTION(params: DistanceMatrixParams): Promise<{ content: any[]; isError?: boolean }> {
   try {
-    if (!placesSearcher) {
-      placesSearcher = new PlacesSearcher();
-    }
-    const result = await placesSearcher.calculateDistanceMatrix(params.origins, params.destinations, params.mode);
+    const result = await getSharedPlacesSearcher().calculateDistanceMatrix(params.origins, params.destinations, params.mode);
 
     if (!result.success) {
       return {

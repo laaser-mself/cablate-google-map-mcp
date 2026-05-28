@@ -1,6 +1,7 @@
 import { Client, Language, TravelMode } from "@googlemaps/google-maps-services-js";
 import dotenv from "dotenv";
 import { Logger } from "../index.js";
+import { getGoogleMapsLimiter } from "./concurrencyLimit.js";
 
 dotenv.config();
 
@@ -47,7 +48,12 @@ export class GoogleMapsTools {
     }
   }
 
+  private withLimit<T>(fn: () => Promise<T>): Promise<T> {
+    return getGoogleMapsLimiter().run(fn);
+  }
+
   async searchNearbyPlaces(params: SearchParams): Promise<PlaceResult[]> {
+    return this.withLimit(async () => {
     const searchParams = {
       location: params.location,
       radius: params.radius || 1000,
@@ -77,9 +83,11 @@ export class GoogleMapsTools {
       Logger.error("Error in searchNearbyPlaces:", error);
       throw new Error("An error occurred while searching nearby places");
     }
+    });
   }
 
   async getPlaceDetails(placeId: string) {
+    return this.withLimit(async () => {
     const requestParams = {
       place_id: placeId,
       fields: ["name", "rating", "formatted_address", "opening_hours", "reviews", "geometry", "formatted_phone_number", "website", "price_level", "photos"],
@@ -101,9 +109,11 @@ export class GoogleMapsTools {
       Logger.error("Error in getPlaceDetails:", error);
       throw new Error("An error occurred while fetching place details");
     }
+    });
   }
 
   private async geocodeAddress(address: string): Promise<GeocodeResult> {
+    return this.withLimit(async () => {
     const requestParams = {
       address: address,
       key: process.env.GOOGLE_MAPS_API_KEY || "",
@@ -135,6 +145,7 @@ export class GoogleMapsTools {
       Logger.error("Error in geocodeAddress:", error);
       throw new Error("An error occurred while converting the address to coordinates");
     }
+    });
   }
 
   private parseCoordinates(coordString: string): GeocodeResult {
@@ -178,6 +189,7 @@ export class GoogleMapsTools {
     place_id: string;
     address_components: any[];
   }> {
+    return this.withLimit(async () => {
     const requestParams = {
       latlng: { lat: latitude, lng: longitude },
       language: this.defaultLanguage,
@@ -207,6 +219,7 @@ export class GoogleMapsTools {
       Logger.error("Error in reverseGeocode:", error);
       throw new Error("An error occurred while converting coordinates to an address");
     }
+    });
   }
 
   async calculateDistanceMatrix(
@@ -219,6 +232,7 @@ export class GoogleMapsTools {
     origin_addresses: string[];
     destination_addresses: string[];
   }> {
+    return this.withLimit(async () => {
     const requestParams = {
       origins: origins,
       destinations: destinations,
@@ -279,6 +293,7 @@ export class GoogleMapsTools {
       Logger.error("Error in calculateDistanceMatrix:", error);
       throw new Error("An error occurred while calculating the distance matrix");
     }
+    });
   }
 
   async getDirections(
@@ -295,6 +310,7 @@ export class GoogleMapsTools {
     arrival_time: string;
     departure_time: string;
   }> {
+    return this.withLimit(async () => {
     try {
       let apiArrivalTime: number | undefined = undefined;
       if (arrival_time) {
@@ -379,9 +395,11 @@ export class GoogleMapsTools {
       Logger.error("Error in getDirections:", error);
       throw new Error("An error occurred while retrieving directions: " + error);
     }
+    });
   }
 
   async getElevation(locations: Array<{ latitude: number; longitude: number }>): Promise<Array<{ elevation: number; location: { lat: number; lng: number } }>> {
+    return this.withLimit(async () => {
     try {
       const formattedLocations = locations.map((loc) => ({
         lat: loc.latitude,
@@ -415,5 +433,6 @@ export class GoogleMapsTools {
       Logger.error("Error in getElevation:", error);
       throw new Error("An error occurred while retrieving elevation data");
     }
+    });
   }
 }

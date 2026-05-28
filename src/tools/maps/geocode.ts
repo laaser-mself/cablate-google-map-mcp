@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PlacesSearcher } from "../../services/PlacesSearcher.js";
+import { getSharedPlacesSearcher } from "../../services/sharedPlacesSearcher.js";
 
 const NAME = "maps_geocode";
 const DESCRIPTION = "Convert addresses or place names to geographic coordinates (latitude and longitude)";
@@ -10,14 +10,9 @@ const SCHEMA = {
 
 export type GeocodeParams = z.infer<z.ZodObject<typeof SCHEMA>>;
 
-let placesSearcher: PlacesSearcher | null = null;
-
 async function ACTION(params: GeocodeParams): Promise<{ content: any[]; isError?: boolean }> {
   try {
-    if (!placesSearcher) {
-      placesSearcher = new PlacesSearcher();
-    }
-    const result = await placesSearcher.geocode(params.address);
+    const result = await getSharedPlacesSearcher().geocode(params.address);
 
     if (!result.success) {
       return {

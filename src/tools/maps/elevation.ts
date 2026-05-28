@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PlacesSearcher } from "../../services/PlacesSearcher.js";
+import { getSharedPlacesSearcher } from "../../services/sharedPlacesSearcher.js";
 
 const NAME = "maps_elevation";
 const DESCRIPTION = "Get elevation data (height above sea level) for specific geographic locations";
@@ -13,14 +13,9 @@ const SCHEMA = {
 
 export type ElevationParams = z.infer<z.ZodObject<typeof SCHEMA>>;
 
-let placesSearcher: PlacesSearcher | null = null;
-
 async function ACTION(params: ElevationParams): Promise<{ content: any[]; isError?: boolean }> {
   try {
-    if (!placesSearcher) {
-      placesSearcher = new PlacesSearcher();
-    }
-    const result = await placesSearcher.getElevation(params.locations);
+    const result = await getSharedPlacesSearcher().getElevation(params.locations);
 
     if (!result.success) {
       return {

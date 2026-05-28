@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PlacesSearcher } from "../../services/PlacesSearcher.js";
+import { getSharedPlacesSearcher } from "../../services/sharedPlacesSearcher.js";
 
 const NAME = "maps_directions";
 const DESCRIPTION = "Get detailed turn-by-turn navigation directions between two locations with route information";
@@ -14,14 +14,9 @@ const SCHEMA = {
 
 export type DirectionsParams = z.infer<z.ZodObject<typeof SCHEMA>>;
 
-let placesSearcher: PlacesSearcher | null = null;
-
 async function ACTION(params: DirectionsParams): Promise<{ content: any[]; isError?: boolean }> {
   try {
-    if (!placesSearcher) {
-      placesSearcher = new PlacesSearcher();
-    }
-    const result = await placesSearcher.getDirections(
+    const result = await getSharedPlacesSearcher().getDirections(
       params.origin,
       params.destination,
       params.mode,

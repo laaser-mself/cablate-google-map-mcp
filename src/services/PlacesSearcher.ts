@@ -1,4 +1,4 @@
-import { GoogleMapsTools } from "./toolclass.js";
+import { getSharedGoogleMapsTools } from "./sharedGoogleMapsTools.js";
 
 interface SearchNearbyResponse {
   success: boolean;
@@ -65,11 +65,7 @@ interface ElevationResponse {
 }
 
 export class PlacesSearcher {
-  private mapsTools: GoogleMapsTools;
-
-  constructor() {
-    this.mapsTools = new GoogleMapsTools();
-  }
+  private readonly mapsTools = getSharedGoogleMapsTools();
 
   async searchNearby(params: { center: { value: string; isCoordinates: boolean }; keyword?: string; radius?: number; openNow?: boolean; minRating?: number }): Promise<SearchNearbyResponse> {
     try {
