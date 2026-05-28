@@ -186,6 +186,10 @@ export class BaseMcpServer {
     const app = express();
     app.use(express.json());
 
+    app.get("/", (req: Request, res: Response) => {
+      res.status(200).send("The flim is okee dokee");
+    });
+
     app.post("/mcp", async (req: Request, res: Response) => {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
@@ -278,9 +282,9 @@ export class BaseMcpServer {
 
     this.startSessionSweeper();
 
-    this.httpServer = app.listen(port, () => {
+    this.httpServer = app.listen(port, "0.0.0.0", () => {
       Logger.log(`[${this.serverName}] HTTP server listening on port ${port}`);
-      Logger.log(`[${this.serverName}] MCP endpoint available at http://localhost:${port}/mcp`);
+      Logger.log(`[${this.serverName}] MCP endpoint available at http://[IP]:${port}/mcp`);
       Logger.log(
         `[${this.serverName}] Session limits: max=${this.maxSessions}, idleMs=${this.sessionIdleMs}, sweepMs=${this.sessionSweepMs}`
       );
