@@ -9,8 +9,8 @@ import { Logger } from "../index.js";
 
 const VERSION = "0.0.1";
 
-const DEFAULT_SESSION_IDLE_MS = 30 * 60 * 1000;
-const DEFAULT_MAX_SESSIONS = 500;
+const DEFAULT_SESSION_IDLE_MS = 30 * 1000;
+const DEFAULT_MAX_SESSIONS = 5000;
 const DEFAULT_SESSION_SWEEP_MS = 60 * 1000;
 
 // Define a structure for tool configurations
