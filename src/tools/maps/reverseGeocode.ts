@@ -1,42 +1,43 @@
 import { z } from "zod";
 import { getSharedPlacesSearcher } from "../../services/sharedPlacesSearcher.js";
+import { caughtErrorToMcp, toMcpContent } from "../../services/mapsResponse.js";
+import { commonMapsParams } from "./commonSchema.js";
 
 const NAME = "maps_reverse_geocode";
-const DESCRIPTION = "Convert geographic coordinates (latitude and longitude) to a human-readable address";
+const DESCRIPTION = "Convert geographic coordinates or a place ID to a human-readable address. Returns the primary match plus alternates.";
 
 const SCHEMA = {
-  latitude: z.number().describe("Latitude coordinate"),
-  longitude: z.number().describe("Longitude coordinate"),
+  latitude: z.number().optional().describe("Latitude coordinate"),
+  longitude: z.number().optional().describe("Longitude coordinate"),
+  placeId: z.string().optional().describe("Google Maps place ID to reverse-geocode"),
+  resultType: z.array(z.string()).optional().describe("Filter by address result types"),
+  locationType: z.array(z.string()).optional().describe("Filter by geometry location types"),
+  enableAddressDescriptor: z.boolean().optional().describe("Request ADDRESS_DESCRIPTOR extra computation"),
+  resultIndex: z.number().int().min(0).optional().describe("Which result to treat as primary (default 0)"),
+  includeAlternates: z.boolean().optional().describe("Include remaining results in data.alternates (default true)"),
+  ...commonMapsParams,
 };
 
-export type ReverseGeocodeParams = z.infer<z.ZodObject<typeof SCHEMA>>;
+export const ReverseGeocodeSchema = z.object(SCHEMA).superRefine((value, ctx) => {
+  const hasLatLng = value.latitude !== undefined && value.longitude !== undefined;
+  const hasPartialLatLng = (value.latitude !== undefined) !== (value.longitude !== undefined);
+  if (hasPartialLatLng) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "latitude and longitude must be provided together" });
+  }
+  if (!hasLatLng && !value.placeId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Provide (latitude AND longitude) OR placeId" });
+  }
+});
+
+export type ReverseGeocodeParams = z.infer<typeof ReverseGeocodeSchema>;
 
 async function ACTION(params: ReverseGeocodeParams): Promise<{ content: any[]; isError?: boolean }> {
   try {
-    const result = await getSharedPlacesSearcher().reverseGeocode(params.latitude, params.longitude);
-
-    if (!result.success) {
-      return {
-        content: [{ type: "text", text: result.error || "Reverse geocoding failed" }],
-        isError: true,
-      };
-    }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '),
-        },
-      ],
-      isError: false,
-    };
+    const parsed = ReverseGeocodeSchema.parse(params);
+    const result = await getSharedPlacesSearcher().reverseGeocode(parsed);
+    return toMcpContent(result);
   } catch (error: any) {
-    const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-    return {
-      isError: true,
-      content: [{ type: "text", text: `Reverse geocoding error: ${errorMessage}` }],
-    };
+    return caughtErrorToMcp(NAME, error);
   }
 }
 

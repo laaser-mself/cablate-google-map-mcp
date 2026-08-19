@@ -1,49 +1,83 @@
-import { Client, Language, TravelMode } from "@googlemaps/google-maps-services-js";
+import { Client, Language } from "@googlemaps/google-maps-services-js";
 import dotenv from "dotenv";
 import { Logger } from "../index.js";
 import { getGoogleMapsLimiter } from "./concurrencyLimit.js";
+import { gmapsCaughtToEnvelope } from "./mapsResponse.js";
+import {
+  buildRoutesBody,
+  HttpRoutesClient,
+  mapComputeRoutes,
+  mapRouteMatrix,
+  RoutesClient,
+} from "./routesApi.js";
+import {
+  DEFAULT_PLACE_DETAILS_FIELDS,
+  DirectionsOptions,
+  DistanceMatrixData,
+  DistanceMatrixOptions,
+  ElevationOptions,
+  ElevationPointOut,
+  GeocodeOptions,
+  GmapsEnvelope,
+  LatLng,
+  MapsRequestOptions,
+  PlaceDetailsOptions,
+  ReverseGeocodeOptions,
+  SearchNearbyOptions,
+  TravelModeName,
+} from "./mapsTypes.js";
 
 dotenv.config();
 
-interface SearchParams {
-  location: { lat: number; lng: number };
-  radius?: number;
-  keyword?: string;
-  openNow?: boolean;
-  minRating?: number;
+interface SearchParams extends SearchNearbyOptions {
+  location: LatLng;
 }
 
-interface PlaceResult {
-  name: string;
-  place_id: string;
-  formatted_address?: string;
-  geometry: {
-    location: {
-      lat: number;
-      lng: number;
-    };
-  };
-  rating?: number;
-  user_ratings_total?: number;
-  opening_hours?: {
-    open_now?: boolean;
-  };
-}
-
-interface GeocodeResult {
+interface SlimLocation {
   lat: number;
   lng: number;
   formatted_address?: string;
   place_id?: string;
 }
 
+function redactParams(params: Record<string, unknown>): Record<string, unknown> {
+  if (params.key) {
+    return { ...params, key: "***" };
+  }
+  return params;
+}
+
+/** Drop unset keys. The GMaps client serializer crashes on `bounds: undefined` (reads `.southwest`). */
+function compactParams(params: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+function failCaught<T>(label: string, error: unknown, data: T): GmapsEnvelope<T> {
+  const parsed = gmapsCaughtToEnvelope(error);
+  Logger.error(label, parsed.error_message);
+  return { status: parsed.status, error_message: parsed.error_message, data };
+}
+
+function logJson(label: string, value: unknown): void {
+  Logger.log(label, JSON.stringify(value).replace(/\n/g, " "));
+}
+
 export class GoogleMapsTools {
   private client: Client;
+  private routes: RoutesClient;
   private readonly defaultLanguage: Language = Language.en;
 
-  constructor() {
-    this.client = new Client({});
-    if (!process.env.GOOGLE_MAPS_API_KEY) {
+  constructor(client?: Client, routesClient?: RoutesClient) {
+    this.client = client ?? new Client({});
+    this.routes = routesClient ?? new HttpRoutesClient(() => this.apiKey());
+    if (!client && !process.env.GOOGLE_MAPS_API_KEY) {
       throw new Error("Google Maps API Key is required");
     }
   }
@@ -52,103 +86,142 @@ export class GoogleMapsTools {
     return getGoogleMapsLimiter().run(fn);
   }
 
-  async searchNearbyPlaces(params: SearchParams): Promise<PlaceResult[]> {
+  private language(options?: MapsRequestOptions): string {
+    return options?.language || this.defaultLanguage;
+  }
+
+  private apiKey(): string {
+    return process.env.GOOGLE_MAPS_API_KEY || "";
+  }
+
+  async searchNearbyPlaces(params: SearchParams): Promise<GmapsEnvelope<any[]>> {
     return this.withLimit(async () => {
-    const searchParams = {
-      location: params.location,
-      radius: params.radius || 1000,
-      keyword: params.keyword,
-      opennow: params.openNow,
-      language: this.defaultLanguage,
-      key: process.env.GOOGLE_MAPS_API_KEY || "",
-    };
-
-    Logger.log("Google Maps API - Places Nearby Request:", JSON.stringify(searchParams, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
-
-    try {
-      const response = await this.client.placesNearby({
-        params: searchParams,
+      const searchParams: Record<string, unknown> = compactParams({
+        location: params.location,
+        keyword: params.keyword,
+        opennow: params.openNow,
+        language: this.language(params),
+        region: params.region,
+        type: params.type,
+        minprice: params.minPrice,
+        maxprice: params.maxPrice,
+        pagetoken: params.pageToken,
+        key: this.apiKey(),
       });
 
-      Logger.log("Google Maps API - Places Nearby Response:", JSON.stringify(response.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
-
-      let results = response.data.results;
-
-      if (params.minRating) {
-        results = results.filter((place) => (place.rating || 0) >= (params.minRating || 0));
+      if (params.rankBy === "distance") {
+        searchParams.rankby = "distance";
+      } else {
+        searchParams.radius = params.radius || 1000;
       }
 
-      return results as PlaceResult[];
-    } catch (error) {
-      Logger.error("Error in searchNearbyPlaces:", error);
-      throw new Error("An error occurred while searching nearby places");
-    }
-    });
-  }
+      logJson("Google Maps API - Places Nearby Request:", redactParams(searchParams));
 
-  async getPlaceDetails(placeId: string) {
-    return this.withLimit(async () => {
-    const requestParams = {
-      place_id: placeId,
-      fields: ["name", "rating", "formatted_address", "opening_hours", "reviews", "geometry", "formatted_phone_number", "website", "price_level", "photos"],
-      language: this.defaultLanguage,
-      key: process.env.GOOGLE_MAPS_API_KEY || "",
-    };
+      try {
+        const response = await this.client.placesNearby({
+          params: searchParams as any,
+        });
 
-    Logger.log("Google Maps API - Place Details Request:", JSON.stringify(requestParams, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
+        logJson("Google Maps API - Places Nearby Response:", response.data);
 
-    try {
-      const response = await this.client.placeDetails({
-        params: requestParams,
-      });
+        let results = response.data.results || [];
+        if (params.minRating) {
+          results = results.filter((place: any) => (place.rating || 0) >= (params.minRating || 0));
+        }
 
-      Logger.log("Google Maps API - Place Details Response:", JSON.stringify(response.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
-
-      return response.data.result;
-    } catch (error) {
-      Logger.error("Error in getPlaceDetails:", error);
-      throw new Error("An error occurred while fetching place details");
-    }
-    });
-  }
-
-  private async geocodeAddress(address: string): Promise<GeocodeResult> {
-    return this.withLimit(async () => {
-    const requestParams = {
-      address: address,
-      key: process.env.GOOGLE_MAPS_API_KEY || "",
-      language: this.defaultLanguage,
-    };
-
-    Logger.log("Google Maps API - Geocode Request:", JSON.stringify(requestParams, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
-
-    try {
-      const response = await this.client.geocode({
-        params: requestParams,
-      });
-
-      Logger.log("Google Maps API - Geocode Response:", JSON.stringify(response.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
-
-      if (response.data.results.length === 0) {
-        throw new Error("No location found for the specified address");
+        return {
+          status: response.data.status,
+          error_message: (response.data as any).error_message,
+          html_attributions: response.data.html_attributions,
+          next_page_token: response.data.next_page_token,
+          data: results,
+        };
+      } catch (error) {
+        return failCaught("Error in searchNearbyPlaces:", error, []);
       }
-
-      const result = response.data.results[0];
-      const location = result.geometry.location;
-      return {
-        lat: location.lat,
-        lng: location.lng,
-        formatted_address: result.formatted_address,
-        place_id: result.place_id,
-      };
-    } catch (error) {
-      Logger.error("Error in geocodeAddress:", error);
-      throw new Error("An error occurred while converting the address to coordinates");
-    }
     });
   }
 
-  private parseCoordinates(coordString: string): GeocodeResult {
+  async getPlaceDetails(placeId: string, options: PlaceDetailsOptions = {}): Promise<GmapsEnvelope<any>> {
+    return this.withLimit(async () => {
+      const fields = options.fields && options.fields.length > 0 ? options.fields : DEFAULT_PLACE_DETAILS_FIELDS;
+      const requestParams = compactParams({
+        place_id: placeId,
+        fields,
+        language: this.language(options),
+        region: options.region,
+        sessiontoken: options.sessionToken,
+        key: this.apiKey(),
+      });
+
+      logJson("Google Maps API - Place Details Request:", redactParams(requestParams));
+
+      try {
+        const response = await this.client.placeDetails({
+          params: requestParams as any,
+        });
+
+        logJson("Google Maps API - Place Details Response:", response.data);
+
+        return {
+          status: response.data.status,
+          error_message: (response.data as any).error_message,
+          html_attributions: response.data.html_attributions,
+          data: response.data.result,
+        };
+      } catch (error) {
+        return failCaught("Error in getPlaceDetails:", error, undefined);
+      }
+    });
+  }
+
+  private async geocodeAddress(address: string, options: MapsRequestOptions = {}): Promise<SlimLocation> {
+    const envelope = await this.geocodeRaw({ address, ...options });
+    if (!envelope.data.length) {
+      throw new Error("No location found for the specified address");
+    }
+    const result = envelope.data[0];
+    return {
+      lat: result.geometry.location.lat,
+      lng: result.geometry.location.lng,
+      formatted_address: result.formatted_address,
+      place_id: result.place_id,
+    };
+  }
+
+  async geocodeRaw(options: GeocodeOptions): Promise<GmapsEnvelope<any[]>> {
+    return this.withLimit(async () => {
+      const requestParams = compactParams({
+        address: options.address,
+        place_id: options.placeId,
+        bounds: options.bounds,
+        components: options.components,
+        language: this.language(options),
+        region: options.region,
+        key: this.apiKey(),
+      });
+
+      logJson("Google Maps API - Geocode Request:", redactParams(requestParams));
+
+      try {
+        const response = await this.client.geocode({
+          params: requestParams as any,
+        });
+
+        logJson("Google Maps API - Geocode Response:", response.data);
+
+        return {
+          status: response.data.status,
+          error_message: (response.data as any).error_message,
+          data: response.data.results || [],
+        };
+      } catch (error) {
+        return failCaught("Error in geocodeRaw:", error, []);
+      }
+    });
+  }
+
+  private parseCoordinates(coordString: string): SlimLocation {
     const coords = coordString.split(",").map((c) => parseFloat(c.trim()));
     if (coords.length !== 2 || isNaN(coords[0]) || isNaN(coords[1])) {
       throw new Error("Invalid coordinate format. Please use 'latitude,longitude' format");
@@ -156,283 +229,182 @@ export class GoogleMapsTools {
     return { lat: coords[0], lng: coords[1] };
   }
 
-  async getLocation(center: { value: string; isCoordinates: boolean }): Promise<GeocodeResult> {
+  async getLocation(center: { value: string; isCoordinates: boolean }): Promise<SlimLocation> {
     if (center.isCoordinates) {
       return this.parseCoordinates(center.value);
     }
     return this.geocodeAddress(center.value);
   }
 
-  async geocode(address: string): Promise<{
-    location: { lat: number; lng: number };
-    formatted_address: string;
-    place_id: string;
-  }> {
-    try {
-      const result = await this.geocodeAddress(address);
-      return {
-        location: { lat: result.lat, lng: result.lng },
-        formatted_address: result.formatted_address || "",
-        place_id: result.place_id || "",
-      };
-    } catch (error) {
-      Logger.error("Error in geocode:", error);
-      throw new Error("An error occurred while converting the address to coordinates");
-    }
-  }
-
-  async reverseGeocode(
-    latitude: number,
-    longitude: number
-  ): Promise<{
-    formatted_address: string;
-    place_id: string;
-    address_components: any[];
-  }> {
+  async reverseGeocodeRaw(options: ReverseGeocodeOptions): Promise<GmapsEnvelope<any[]>> {
     return this.withLimit(async () => {
-    const requestParams = {
-      latlng: { lat: latitude, lng: longitude },
-      language: this.defaultLanguage,
-      key: process.env.GOOGLE_MAPS_API_KEY || "",
-    };
-
-    Logger.log("Google Maps API - Reverse Geocode Request:", JSON.stringify(requestParams, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
-
-    try {
-      const response = await this.client.reverseGeocode({
-        params: requestParams,
+      const requestParams = compactParams({
+        language: this.language(options),
+        region: options.region,
+        result_type: options.resultType,
+        location_type: options.locationType,
+        extra_computations: options.enableAddressDescriptor ? ["ADDRESS_DESCRIPTOR"] : undefined,
+        key: this.apiKey(),
+        ...(options.placeId
+          ? { place_id: options.placeId }
+          : { latlng: { lat: options.latitude, lng: options.longitude } }),
       });
 
-      Logger.log("Google Maps API - Reverse Geocode Response:", JSON.stringify(response.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
+      logJson("Google Maps API - Reverse Geocode Request:", redactParams(requestParams));
 
-      if (response.data.results.length === 0) {
-        throw new Error("No address found for the specified coordinates");
+      try {
+        const response = await this.client.reverseGeocode({
+          params: requestParams as any,
+        });
+
+        logJson("Google Maps API - Reverse Geocode Response:", response.data);
+
+        return {
+          status: response.data.status,
+          error_message: (response.data as any).error_message,
+          data: response.data.results || [],
+        };
+      } catch (error) {
+        return failCaught("Error in reverseGeocode:", error, []);
       }
-
-      const result = response.data.results[0];
-      return {
-        formatted_address: result.formatted_address,
-        place_id: result.place_id,
-        address_components: result.address_components,
-      };
-    } catch (error) {
-      Logger.error("Error in reverseGeocode:", error);
-      throw new Error("An error occurred while converting coordinates to an address");
-    }
     });
   }
 
   async calculateDistanceMatrix(
     origins: string[],
     destinations: string[],
-    mode: "driving" | "walking" | "bicycling" | "transit" = "driving"
-  ): Promise<{
-    distances: any[][];
-    durations: any[][];
-    origin_addresses: string[];
-    destination_addresses: string[];
-  }> {
-    return this.withLimit(async () => {
-    const requestParams = {
-      origins: origins,
-      destinations: destinations,
-      mode: mode as TravelMode,
-      language: this.defaultLanguage,
-      key: process.env.GOOGLE_MAPS_API_KEY || "",
+    mode: TravelModeName = "driving",
+    options: DistanceMatrixOptions = {}
+  ): Promise<GmapsEnvelope<DistanceMatrixData>> {
+    const empty: DistanceMatrixData = {
+      origin_addresses: [],
+      destination_addresses: [],
+      elements: [],
+      distances: [],
+      durations: [],
     };
-
-    Logger.log("Google Maps API - Distance Matrix Request:", JSON.stringify(requestParams, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
-
-    try {
-      const response = await this.client.distancematrix({
-        params: requestParams,
+    return this.withLimit(async () => {
+      const departureTime = options.departureTime ? new Date(options.departureTime) : undefined;
+      const arrivalTime = options.arrivalTime ? new Date(options.arrivalTime) : undefined;
+      const body = buildRoutesBody({
+        origins,
+        destinations,
+        mode,
+        language: this.language(options),
+        region: options.region,
+        avoid: options.avoid,
+        units: options.units,
+        trafficModel: options.trafficModel,
+        transitMode: options.transitMode,
+        transitRoutingPreference: options.transitRoutingPreference,
+        departureTime,
+        arrivalTime,
+        forMatrix: true,
       });
+      const trafficAware = body.routingPreference === "TRAFFIC_AWARE";
 
-      Logger.log("Google Maps API - Distance Matrix Response:", JSON.stringify(response.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
+      logJson("Google Maps Routes API - Route Matrix Request:", body);
 
-      const result = response.data;
-
-      if (result.status !== "OK") {
-        throw new Error(`Distance matrix computation failed: ${result.status}`);
+      try {
+        const raw = await this.routes.computeRouteMatrix(body);
+        logJson("Google Maps Routes API - Route Matrix Response:", raw);
+        return {
+          status: "OK",
+          data: mapRouteMatrix(origins, destinations, raw, { units: options.units, trafficAware }),
+        };
+      } catch (error) {
+        return failCaught("Error in calculateDistanceMatrix:", error, empty);
       }
-
-      const distances: any[][] = [];
-      const durations: any[][] = [];
-
-      result.rows.forEach((row: any) => {
-        const distanceRow: any[] = [];
-        const durationRow: any[] = [];
-
-        row.elements.forEach((element: any) => {
-          if (element.status === "OK") {
-            distanceRow.push({
-              value: element.distance.value,
-              text: element.distance.text,
-            });
-            durationRow.push({
-              value: element.duration.value,
-              text: element.duration.text,
-            });
-          } else {
-            distanceRow.push(null);
-            durationRow.push(null);
-          }
-        });
-
-        distances.push(distanceRow);
-        durations.push(durationRow);
-      });
-
-      return {
-        distances: distances,
-        durations: durations,
-        origin_addresses: result.origin_addresses,
-        destination_addresses: result.destination_addresses,
-      };
-    } catch (error) {
-      Logger.error("Error in calculateDistanceMatrix:", error);
-      throw new Error("An error occurred while calculating the distance matrix");
-    }
     });
   }
 
   async getDirections(
     origin: string,
     destination: string,
-    mode: "driving" | "walking" | "bicycling" | "transit" = "driving",
+    mode: TravelModeName = "driving",
     departure_time?: Date,
-    arrival_time?: Date
-  ): Promise<{
-    routes: any[];
-    summary: string;
-    total_distance: { value: number; text: string };
-    total_duration: { value: number; text: string };
-    arrival_time: string;
-    departure_time: string;
-  }> {
+    arrival_time?: Date,
+    options: DirectionsOptions = {}
+  ): Promise<GmapsEnvelope<any>> {
     return this.withLimit(async () => {
-    try {
-      let apiArrivalTime: number | undefined = undefined;
-      if (arrival_time) {
-        apiArrivalTime = Math.floor(arrival_time.getTime() / 1000);
-      }
+      try {
+        const body = buildRoutesBody({
+          origin,
+          destination,
+          mode,
+          language: this.language(options),
+          region: options.region,
+          waypoints: options.waypoints,
+          alternatives: options.alternatives,
+          optimizeWaypoints: options.optimizeWaypoints,
+          avoid: options.avoid,
+          units: options.units,
+          trafficModel: options.trafficModel,
+          transitMode: options.transitMode,
+          transitRoutingPreference: options.transitRoutingPreference,
+          departureTime: departure_time,
+          arrivalTime: arrival_time,
+        });
+        const trafficAware = body.routingPreference === "TRAFFIC_AWARE";
 
-      let apiDepartureTime: number | "now" | undefined = undefined;
-      if (!apiArrivalTime) {
-        if (departure_time instanceof Date) {
-          apiDepartureTime = Math.floor(departure_time.getTime() / 1000);
-        } else if (departure_time) {
-          apiDepartureTime = departure_time as unknown as "now";
-        } else {
-          apiDepartureTime = "now";
-        }
-      }
+        logJson("Google Maps Routes API - Compute Routes Request:", body);
 
-      const requestParams = {
-        origin: origin,
-        destination: destination,
-        mode: mode as TravelMode,
-        language: this.defaultLanguage,
-        key: process.env.GOOGLE_MAPS_API_KEY || "",
-        arrival_time: apiArrivalTime,
-        departure_time: apiDepartureTime,
-      };
+        const raw = await this.routes.computeRoutes(body);
+        logJson("Google Maps Routes API - Compute Routes Response:", raw);
 
-      Logger.log("Google Maps API - Directions Request:", JSON.stringify(requestParams, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
-
-      const response = await this.client.directions({
-        params: requestParams,
-      });
-
-      Logger.log("Google Maps API - Directions Response:", JSON.stringify(response.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
-
-      const result = response.data;
-
-      if (result.status !== "OK") {
-        throw new Error(`Failed to retrieve directions: ${result.status} (arrival_time: ${apiArrivalTime}, departure_time: ${apiDepartureTime})`);
-      }
-
-      if (result.routes.length === 0) {
-        throw new Error("No routes found");
-      }
-
-      const route = result.routes[0];
-      const legs = route.legs[0];
-
-      const formatTime = (timeInfo: any) => {
-        if (!timeInfo || typeof timeInfo.value !== "number") return "";
-        const date = new Date(timeInfo.value * 1000);
-        const options: Intl.DateTimeFormatOptions = {
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
+        const mapped = mapComputeRoutes(raw, { units: options.units, trafficAware });
+        return {
+          status: mapped.status,
+          error_message: mapped.routes.length ? undefined : "No routes returned",
+          data: mapped,
         };
-        if (timeInfo.time_zone && typeof timeInfo.time_zone === "string") {
-          options.timeZone = timeInfo.time_zone;
-        }
-        return date.toLocaleString(this.defaultLanguage.toString(), options);
-      };
-
-      return {
-        routes: result.routes,
-        summary: route.summary,
-        total_distance: {
-          value: legs.distance.value,
-          text: legs.distance.text,
-        },
-        total_duration: {
-          value: legs.duration.value,
-          text: legs.duration.text,
-        },
-        arrival_time: formatTime(legs.arrival_time),
-        departure_time: formatTime(legs.departure_time),
-      };
-    } catch (error) {
-      Logger.error("Error in getDirections:", error);
-      throw new Error("An error occurred while retrieving directions: " + error);
-    }
+      } catch (error) {
+        return failCaught("Error in getDirections:", error, { routes: [] });
+      }
     });
   }
 
-  async getElevation(locations: Array<{ latitude: number; longitude: number }>): Promise<Array<{ elevation: number; location: { lat: number; lng: number } }>> {
+  async getElevation(options: ElevationOptions): Promise<GmapsEnvelope<ElevationPointOut[]>> {
     return this.withLimit(async () => {
-    try {
-      const formattedLocations = locations.map((loc) => ({
-        lat: loc.latitude,
-        lng: loc.longitude,
-      }));
+      try {
+        const requestParams = compactParams({
+          key: this.apiKey(),
+          ...(options.path && options.samples
+            ? {
+                path: options.path.map((loc) => ({ lat: loc.latitude, lng: loc.longitude })),
+                samples: options.samples,
+              }
+            : {
+                locations: (options.locations || []).map((loc) => ({
+                  lat: loc.latitude,
+                  lng: loc.longitude,
+                })),
+              }),
+        });
 
-      const requestParams = {
-        locations: formattedLocations,
-        key: process.env.GOOGLE_MAPS_API_KEY || "",
-      };
+        logJson("Google Maps API - Elevation Request:", redactParams(requestParams));
 
-      Logger.log("Google Maps API - Elevation Request:", JSON.stringify(requestParams, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
+        const response = await this.client.elevation({
+          params: requestParams as any,
+        });
 
-      const response = await this.client.elevation({
-        params: requestParams,
-      });
+        logJson("Google Maps API - Elevation Response:", response.data);
 
-      Logger.log("Google Maps API - Elevation Response:", JSON.stringify(response.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '));
+        const result = response.data;
+        const data: ElevationPointOut[] = (result.results || []).map((item: any) => ({
+          elevation: item.elevation,
+          location: item.location,
+          resolution: item.resolution,
+        }));
 
-      const result = response.data;
-
-      if (result.status !== "OK") {
-        throw new Error(`Failed to retrieve elevation data: ${result.status}`);
+        return {
+          status: result.status,
+          error_message: (result as any).error_message,
+          data,
+        };
+      } catch (error) {
+        return failCaught("Error in getElevation:", error, []);
       }
-
-      return result.results.map((item: any, index: number) => ({
-        elevation: item.elevation,
-        location: formattedLocations[index],
-      }));
-    } catch (error) {
-      Logger.error("Error in getElevation:", error);
-      throw new Error("An error occurred while retrieving elevation data");
-    }
     });
   }
 }

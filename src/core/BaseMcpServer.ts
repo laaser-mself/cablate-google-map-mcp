@@ -182,7 +182,7 @@ export class BaseMcpServer {
     Logger.log(`${this.serverName} connected and ready to process requests`);
   }
 
-  async startHttpServer(port: number): Promise<void> {
+  async startHttpServer(port: number): Promise<number> {
     const app = express();
     app.use(express.json());
 
@@ -282,12 +282,18 @@ export class BaseMcpServer {
 
     this.startSessionSweeper();
 
-    this.httpServer = app.listen(port, "0.0.0.0", () => {
-      Logger.log(`[${this.serverName}] HTTP server listening on port ${port}`);
-      Logger.log(`[${this.serverName}] MCP endpoint available at http://[IP]:${port}/mcp`);
-      Logger.log(
-        `[${this.serverName}] Session limits: max=${this.maxSessions}, idleMs=${this.sessionIdleMs}, sweepMs=${this.sessionSweepMs}`
-      );
+    return new Promise((resolve, reject) => {
+      this.httpServer = app.listen(port, "0.0.0.0", () => {
+        const address = this.httpServer!.address();
+        const boundPort = typeof address === "object" && address ? address.port : port;
+        Logger.log(`[${this.serverName}] HTTP server listening on port ${boundPort}`);
+        Logger.log(`[${this.serverName}] MCP endpoint available at http://[IP]:${boundPort}/mcp`);
+        Logger.log(
+          `[${this.serverName}] Session limits: max=${this.maxSessions}, idleMs=${this.sessionIdleMs}, sweepMs=${this.sessionSweepMs}`
+        );
+        resolve(boundPort);
+      });
+      this.httpServer.on("error", reject);
     });
   }
 

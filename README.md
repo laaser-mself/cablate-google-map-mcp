@@ -91,17 +91,32 @@ MCP_SERVER_PORT=3000
 
 ## Available Tools
 
-The server provides the following tools:
+All tools return a JSON `McpToolResult` envelope:
 
-### Google Maps Tools
+```json
+{
+  "ok": true,
+  "tool": "maps_geocode",
+  "status": "OK",
+  "html_attributions": [],
+  "next_page_token": null,
+  "data": {}
+}
+```
 
-1. **search_nearby** - Search for nearby places based on location, with optional filtering by keywords, distance, rating, and operating hours
-2. **get_place_details** - Get detailed information about a specific place including contact details, reviews, ratings, and operating hours
-3. **maps_geocode** - Convert addresses or place names to geographic coordinates (latitude and longitude)
-4. **maps_reverse_geocode** - Convert geographic coordinates to a human-readable address
-5. **maps_distance_matrix** - Calculate travel distances and durations between multiple origins and destinations
-6. **maps_directions** - Get detailed turn-by-turn navigation directions between two locations
-7. **maps_elevation** - Get elevation data (height above sea level) for specific geographic locations
+See [GUIDE-0.2.0.md](GUIDE-0.2.0.md) for full param/return tables.
+
+| Tool | Required | Notable optional params |
+|---|---|---|
+| `search_nearby` | `center` | `keyword`, `radius`, `openNow`, `minRating`, `type`, `rankBy`, `minPrice`, `maxPrice`, `pageToken`, `language`, `region` |
+| `get_place_details` | `placeId` | `fields[]`, `sessionToken`, `language`, `region` |
+| `maps_geocode` | one of `address` / `placeId` / `components` | `bounds`, `resultIndex`, `includeAlternates`, `language`, `region` |
+| `maps_reverse_geocode` | `(latitude`+`longitude)` or `placeId` | `resultType[]`, `locationType[]`, `enableAddressDescriptor`, `resultIndex`, `includeAlternates` |
+| `maps_distance_matrix` | `origins`, `destinations` | `mode`, `departureTime`, `arrivalTime`, `trafficModel`, `avoid[]`, `units`, transit options |
+| `maps_directions` | `origin`, `destination` | `waypoints[]`, `alternatives`, `optimizeWaypoints`, `avoid[]`, times (not defaulted to now) |
+| `maps_elevation` | `locations` XOR (`path`+`samples`) | — |
+
+`search_nearby` `data` is `{ center, results }` (breaking vs pre-0.2.0 flat array).
 
 ## Development
 
@@ -122,6 +137,13 @@ cp .env.example .env
 # Build the project
 npm run build
 
+# Unit tests (no API key)
+npm test
+
+# Live GMaps + MCP E2E tests (prompts for GOOGLE_MAPS_API_KEY if unset).
+# Enable Places, Geocoding, Routes API, and Elevation API on the key.
+npm run test:integration
+
 # Start the server
 npm start
 
@@ -133,23 +155,32 @@ npm run dev
 
 ```
 src/
-├── cli.ts                    # Main CLI entry point
-├── config.ts                 # Server configuration
-├── index.ts                  # Package exports
+├── cli.ts
+├── config.ts
+├── index.ts
 ├── core/
-│   └── BaseMcpServer.ts     # Base MCP server with streamable HTTP
-└── tools/
-    ├── echo.ts              # Echo service tool
-    └── maps/                # Google Maps tools
-        ├── toolclass.ts     # Google Maps API client
-        ├── searchPlaces.ts  # Maps service layer
-        ├── searchNearby.ts  # Search nearby places
-        ├── placeDetails.ts  # Place details
-        ├── geocode.ts       # Geocoding
-        ├── reverseGeocode.ts # Reverse geocoding
-        ├── distanceMatrix.ts # Distance matrix
-        ├── directions.ts    # Directions
-        └── elevation.ts     # Elevation data
+│   └── BaseMcpServer.ts
+├── services/
+│   ├── mapsTypes.ts
+│   ├── mapsResponse.ts
+│   ├── routesApi.ts
+│   ├── toolclass.ts
+│   └── PlacesSearcher.ts
+└── tools/maps/
+    ├── commonSchema.ts
+    ├── searchNearby.ts
+    ├── placeDetails.ts
+    ├── geocode.ts
+    ├── reverseGeocode.ts
+    ├── distanceMatrix.ts
+    ├── directions.ts
+    └── elevation.ts
+tests/
+├── services/          # unit tests (mocked GMaps client)
+├── tools/maps/        # MCP ACTION unit tests
+├── schemas/           # Zod adversarial tests
+├── integration/       # live GMaps API calls
+└── e2e/               # mock MCP client → real server
 ```
 
 ## Tech Stack
@@ -191,6 +222,16 @@ If you have any questions or suggestions, feel free to reach out:
 - 📚 Technical Guidance: Sincere welcome for suggestions and guidance
 
 ## Changelog
+
+### v0.2.0
+- Shared `McpToolResult` envelope for all 7 map tools
+- Place Details now returns photos, place_id, opening hours, attributions
+- Geocode/reverse return alternates; distance matrix keeps element status
+- Directions sums all legs and no longer forces `departure_time=now`
+- `maps_distance_matrix` / `maps_directions` use **Routes API v2** (legacy Distance Matrix / Directions endpoints removed)
+- Optional MCP params (`language`, `region`, pagination, waypoints, etc.)
+- Jest unit tests plus live GMaps/MCP E2E suite — see [GUIDE-0.2.0.md](GUIDE-0.2.0.md)
+- Unset GMaps params omitted (client serializer crash); Axios 403 mapped to envelope
 
 ### v0.0.5
 - Added streamable HTTP transport support

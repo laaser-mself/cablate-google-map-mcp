@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { getSharedPlacesSearcher } from "../../services/sharedPlacesSearcher.js";
+import { caughtErrorToMcp, toMcpContent } from "../../services/mapsResponse.js";
+import { commonMapsParams } from "./commonSchema.js";
 
 const NAME = "search_nearby";
-const DESCRIPTION = "Search for nearby places based on location, with optional filtering by keywords, distance, rating, and operating hours";
+const DESCRIPTION = "Search for nearby places based on location, with optional filtering by keywords, distance, rating, operating hours, price, and place type";
 
 const SCHEMA = {
   center: z.object({
@@ -10,39 +12,37 @@ const SCHEMA = {
     isCoordinates: z.boolean().default(false).describe("Whether the value is coordinates"),
   }).describe("Search center point"),
   keyword: z.string().optional().describe("Search keyword (e.g., restaurant, cafe, hotel)"),
-  radius: z.number().default(1000).describe("Search radius in meters"),
+  radius: z.number().optional().describe("Search radius in meters (default 1000; not valid with rankBy=distance)"),
   openNow: z.boolean().default(false).describe("Only show places that are currently open"),
   minRating: z.number().min(0).max(5).optional().describe("Minimum rating requirement (0-5)"),
+  type: z.string().optional().describe("Google Places type filter, e.g. restaurant"),
+  rankBy: z.enum(["prominence", "distance"]).optional().describe("Ranking method; distance requires keyword or type and forbids radius"),
+  minPrice: z.number().min(0).max(4).optional().describe("Minimum price level 0-4"),
+  maxPrice: z.number().min(0).max(4).optional().describe("Maximum price level 0-4"),
+  pageToken: z.string().optional().describe("Pagination token from a previous search_nearby next_page_token"),
+  ...commonMapsParams,
 };
 
-export type SearchNearbyParams = z.infer<z.ZodObject<typeof SCHEMA>>;
+export const SearchNearbySchema = z.object(SCHEMA).superRefine((value, ctx) => {
+  if (value.rankBy === "distance") {
+    if (!value.keyword && !value.type) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "rankBy=distance requires keyword or type" });
+    }
+    if (value.radius !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "radius cannot be combined with rankBy=distance" });
+    }
+  }
+});
+
+export type SearchNearbyParams = z.infer<typeof SearchNearbySchema>;
 
 async function ACTION(params: SearchNearbyParams): Promise<{ content: any[]; isError?: boolean }> {
   try {
-    const result = await getSharedPlacesSearcher().searchNearby(params);
-
-    if (!result.success) {
-      return {
-        content: [{ type: "text", text: result.error || "Search failed" }],
-        isError: true,
-      };
-    }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: `location: ${JSON.stringify(result.location, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' ')}\n` + JSON.stringify(result.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '),
-        },
-      ],
-      isError: false,
-    };
+    const parsed = SearchNearbySchema.parse(params);
+    const result = await getSharedPlacesSearcher().searchNearby(parsed);
+    return toMcpContent(result);
   } catch (error: any) {
-    const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-    return {
-      isError: true,
-      content: [{ type: "text", text: `Error searching nearby places: ${errorMessage}` }],
-    };
+    return caughtErrorToMcp(NAME, error);
   }
 }
 
