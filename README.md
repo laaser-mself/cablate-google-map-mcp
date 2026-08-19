@@ -230,6 +230,8 @@ If you have any questions or suggestions, feel free to reach out:
 - Directions sums all legs and no longer forces `departure_time=now`
 - `maps_distance_matrix` / `maps_directions` use **Routes API v2** (legacy Distance Matrix / Directions endpoints removed)
 - Optional MCP params (`language`, `region`, pagination, waypoints, etc.)
+- Fixed sessions being reaped mid-conversation: idle TTL default 30 s → 30 min
+- Expired/unknown `Mcp-Session-Id` now returns 404 (per Streamable HTTP) so clients re-initialize
 - Jest unit tests plus live GMaps/MCP E2E suite — see [GUIDE-0.2.0.md](GUIDE-0.2.0.md)
 - Unset GMaps params omitted (client serializer crash); Axios 403 mapped to envelope
 

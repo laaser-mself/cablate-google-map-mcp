@@ -9,7 +9,8 @@ import { Logger } from "../index.js";
 
 const VERSION = "0.0.1";
 
-const DEFAULT_SESSION_IDLE_MS = 30 * 1000;
+// Voice callers routinely go minutes between tool calls; reaping at 30s killed live sessions mid-call.
+const DEFAULT_SESSION_IDLE_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_SESSIONS = 5000;
 const DEFAULT_SESSION_SWEEP_MS = 60 * 1000;
 
@@ -123,6 +124,7 @@ export class BaseMcpServer {
     this.sessionSweepTimer = setInterval(() => {
       this.sweepIdleSessions();
     }, this.sessionSweepMs);
+    this.sessionSweepTimer.unref();
   }
 
   private stopSessionSweeper(): void {
@@ -166,6 +168,15 @@ export class BaseMcpServer {
     });
   }
 
+  /**
+   * Streamable HTTP requires 404 (not 400) for a session ID the server no longer holds.
+   * A 400 leaves the client stuck; 404 is the signal to re-issue InitializeRequest.
+   */
+  private sendSessionNotFound(res: Response, sessionId: string): void {
+    Logger.log(`[${this.serverName}] Unknown or expired session: ${sessionId}`);
+    this.sendJsonRpcError(res, 404, "Session not found: reinitialize with a new InitializeRequest");
+  }
+
   async connect(transport: Transport): Promise<void> {
     const server = this.createSessionServer();
     await server.connect(transport);
@@ -197,7 +208,7 @@ export class BaseMcpServer {
         if (sessionId) {
           const session = this.sessions.get(sessionId);
           if (!session) {
-            this.sendJsonRpcError(res, 400, "Bad Request: No valid session ID provided");
+            this.sendSessionNotFound(res, sessionId);
             return;
           }
 
@@ -255,13 +266,13 @@ export class BaseMcpServer {
     const handleSessionRequest = async (req: Request, res: Response) => {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
       if (!sessionId) {
-        res.status(400).send("Invalid or missing session ID");
+        this.sendJsonRpcError(res, 400, "Bad Request: No valid session ID provided");
         return;
       }
 
       const session = this.sessions.get(sessionId);
       if (!session) {
-        res.status(400).send("Invalid or missing session ID");
+        this.sendSessionNotFound(res, sessionId);
         return;
       }
 

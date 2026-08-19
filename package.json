@@ -1,6 +1,6 @@
 {
   "name": "@cablate/mcp-google-map",
-  "version": "0.2.0",
+  "version": "0.0.14",
   "description": "Google Maps MCP server with streamable HTTP transport support for location services, geocoding, and navigation",
   "type": "module",
   "main": "dist/index.js",
@@ -10,16 +10,12 @@
   "files": [
     "dist",
     "dist/**/*.map",
-    "README.md",
-    "GUIDE-0.2.0.md"
+    "README.md"
   ],
   "scripts": {
     "build": "tsup --dts",
     "start": "node dist/cli.js",
     "dev": "cross-env NODE_ENV=development tsup --watch",
-    "test": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs",
-    "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs --watch",
-    "test:integration": "node scripts/run-integration-tests.js",
     "prepublishOnly": "npm run build"
   },
   "engines": {

@@ -8,7 +8,3 @@ export function getSharedGoogleMapsTools(): GoogleMapsTools {
   }
   return instance;
 }
-
-export function setSharedGoogleMapsTools(tools: GoogleMapsTools | null): void {
-  instance = tools;
-}

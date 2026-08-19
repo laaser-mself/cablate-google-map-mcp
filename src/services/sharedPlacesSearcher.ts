@@ -8,7 +8,3 @@ export function getSharedPlacesSearcher(): PlacesSearcher {
   }
   return instance;
 }
-
-export function setSharedPlacesSearcher(searcher: PlacesSearcher | null): void {
-  instance = searcher;
-}

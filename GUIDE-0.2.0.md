@@ -22,7 +22,9 @@
 | Elevation | `resolution` per point; optional path+samples mode |
 | MCP inputs | Optional `language`/`region` and per-tool GMaps params (all optional except XOR rules) |
 | Tests | `npm test` (mocked); `npm run test:integration` (live + MCP E2E). Matrix/Directions skip if **Routes API** is not enabled; Elevation skip if Elevation API is not enabled. Places + Geocoding remain required. |
-| HTTP server | `startHttpServer(0)` returns the bound port (E2E only; session logic unchanged) |
+| HTTP server | `startHttpServer(0)` returns the bound port (E2E only) |
+| Session expiry (**fix**) | Idle TTL default **30 s → 30 min**. A voice caller routinely goes >30 s between tool calls, so the sweeper reaped live sessions mid-conversation. |
+| Session 404 (**fix**) | An unknown/expired `Mcp-Session-Id` now returns **404**, not 400. Streamable HTTP requires 404 — it is the signal for the client to re-issue `InitializeRequest`. A 400 leaves the client wedged for the rest of the call. Missing header on a non-initialize request still returns 400 per spec. |
 | GMaps client params | Omit `undefined`/`null`/empty-string keys before calling `@googlemaps/google-maps-services-js`; the client serializer throws `Cannot read properties of undefined (reading 'southwest')` if `bounds` is present but unset. Catch logs message only (do not dump Axios config — it contains `key`). |
 
 ---
@@ -150,11 +152,36 @@ Key files:
 3. `npm test`
 4. `npm run build`
 5. Enable in GCP: **Places**, **Geocoding**, **Routes API**, and **Elevation API**. Then `npm run test:integration`. Matrix/Directions skip if Routes is not enabled; Elevation skip if Elevation is not enabled. Do **not** enable the legacy Distance Matrix / Directions APIs — this server no longer calls them.
-6. Restart the MCP process; clients must handle `search_nearby` `{ center, results }` and the envelope wrapper.
+6. **Update the deployed `.env`:** if it carries `MCP_SESSION_IDLE_MS=30000` from a prior release, raise it (`1800000`) or delete the line. The env var overrides the new code default, so an untouched `.env` reproduces the mid-call `No valid session ID provided` failure.
+7. Restart the MCP process; clients must handle `search_nearby` `{ center, results }` and the envelope wrapper.
+
+---
+
+## Session expiry defect (observed 2026-08-19)
+
+Packet capture from `gm-mcp-1.laaserapi.com` showed an ElevenLabs agent losing its session mid-call:
+
+```
+POST /mcp   Mcp-Session-Id: bd79df38-0240-432b-8e13-90667ebefa32
+            {"method":"tools/call","params":{"name":"maps_reverse_geocode",...}}
+HTTP/1.1 400 Bad Request
+            {"error":{"code":-32000,"message":"Bad Request: No valid session ID provided"}}
+```
+
+Two defects, both fixed:
+
+1. **Premature reap.** `MCP_SESSION_IDLE_MS` defaulted to 30 s, swept every 60 s. The caller talks for longer than that between tool calls, so the session was gone before the next call arrived.
+2. **Unrecoverable status.** The server answered 400. Streamable HTTP mandates **404** for a terminated session ID, and a 404 is what tells the client to re-initialize. With a 400 the agent stays broken for the remainder of the call.
+
+If sessions must be reaped aggressively, item 2 alone makes the failure self-healing on a spec-compliant client. Item 1 avoids the round trip entirely.
+
+**Horizontal scaling caveat:** sessions live in process memory. More than one replica behind the load balancer will produce the same 404 whenever a request lands on a different instance. Keep this service single-instance, or add sticky sessions on `Mcp-Session-Id`, until session state is externalized.
+
+Regression coverage: `tests/core/sessionLifecycle.test.ts`.
 
 ---
 
 ## Intentionally unchanged
 
-- Per-session `McpServer` + idle/max session limits from the multitenant branch
+- Per-session `McpServer` + max session limit from the multitenant branch
 - No new GMaps products (Autocomplete, Text Search, Timezone, Roads) — Phase 3 backlog
