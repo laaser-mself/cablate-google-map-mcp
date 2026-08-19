@@ -1,0 +1,17 @@
+{
+  "status": "OK",
+  "origin_addresses": ["A"],
+  "destination_addresses": ["B"],
+  "rows": [
+    {
+      "elements": [
+        {
+          "status": "OK",
+          "distance": { "value": 1000, "text": "1 km" },
+          "duration": { "value": 120, "text": "2 mins" },
+          "duration_in_traffic": { "value": 150, "text": "3 mins" }
+        }
+      ]
+    }
+  ]
+}

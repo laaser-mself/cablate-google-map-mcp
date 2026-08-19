@@ -1,44 +1,42 @@
 import { z } from "zod";
 import { getSharedPlacesSearcher } from "../../services/sharedPlacesSearcher.js";
+import { caughtErrorToMcp, toMcpContent } from "../../services/mapsResponse.js";
 
 const NAME = "maps_elevation";
-const DESCRIPTION = "Get elevation data (height above sea level) for specific geographic locations";
+const DESCRIPTION = "Get elevation data (height above sea level) for specific geographic locations, or sample a path";
 
 const SCHEMA = {
   locations: z.array(z.object({
     latitude: z.number().describe("Latitude coordinate"),
     longitude: z.number().describe("Longitude coordinate"),
-  })).describe("List of locations to get elevation data for"),
+  })).optional().describe("List of locations to get elevation data for"),
+  path: z.array(z.object({
+    latitude: z.number(),
+    longitude: z.number(),
+  })).optional().describe("Path to sample; requires samples"),
+  samples: z.number().int().positive().optional().describe("Number of samples along path"),
 };
 
-export type ElevationParams = z.infer<z.ZodObject<typeof SCHEMA>>;
+export const ElevationSchema = z.object(SCHEMA).superRefine((value, ctx) => {
+  const hasLocations = !!(value.locations && value.locations.length > 0);
+  const hasPath = !!(value.path && value.path.length > 0 && value.samples);
+  if (hasLocations === hasPath) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide exactly one of locations or (path + samples)",
+    });
+  }
+});
+
+export type ElevationParams = z.infer<typeof ElevationSchema>;
 
 async function ACTION(params: ElevationParams): Promise<{ content: any[]; isError?: boolean }> {
   try {
-    const result = await getSharedPlacesSearcher().getElevation(params.locations);
-
-    if (!result.success) {
-      return {
-        content: [{ type: "text", text: result.error || "Failed to retrieve elevation data" }],
-        isError: true,
-      };
-    }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result.data, null, 2).replace(/\n/g, ' ').replace(/  +/g, ' '),
-        },
-      ],
-      isError: false,
-    };
+    const parsed = ElevationSchema.parse(params);
+    const result = await getSharedPlacesSearcher().getElevation(parsed);
+    return toMcpContent(result);
   } catch (error: any) {
-    const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-    return {
-      isError: true,
-      content: [{ type: "text", text: `Elevation data error: ${errorMessage}` }],
-    };
+    return caughtErrorToMcp(NAME, error);
   }
 }
 
